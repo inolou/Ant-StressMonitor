@@ -40,8 +40,8 @@ public partial class GraphWindow : Window
 
     public GraphWindow(HeartRateMonitor monitor)
     {
-        InitializeComponent();
         _monitor = monitor;
+        InitializeComponent();
 
         _monitor.DeviceStatusChanged += OnDeviceStatusChanged;
         DeviceStatusText.Text = _monitor.CurrentDeviceInfo;
