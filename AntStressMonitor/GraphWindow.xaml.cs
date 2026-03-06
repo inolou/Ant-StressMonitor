@@ -63,6 +63,7 @@ public partial class GraphWindow : Window
     private readonly HeartRateMonitor _monitor;
     private readonly DispatcherTimer  _timer;
     private TimeSpan                  _selectedRange = LiveWindow;
+    private bool                      _isInitialized;
 
     // ── Construction ────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ public partial class GraphWindow : Window
     {
         _monitor = monitor;
         InitializeComponent();
+        _isInitialized = true;
 
         _monitor.DeviceStatusChanged += OnDeviceStatusChanged;
         DeviceStatusText.Text = _monitor.CurrentDeviceInfo;
@@ -112,6 +114,9 @@ public partial class GraphWindow : Window
 
     private void DrawChart()
     {
+        if (!_isInitialized)
+            return;
+
         ChartCanvas.Children.Clear();
 
         double canvasW = ChartCanvas.ActualWidth;
