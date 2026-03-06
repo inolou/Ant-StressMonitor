@@ -1,0 +1,15 @@
+# .NET build artifacts
+bin/
+obj/
+
+# NuGet packages (restored automatically)
+*.nupkg
+packages/
+
+# User-specific VS files
+*.user
+*.suo
+.vs/
+
+# Publish output
+publish/
