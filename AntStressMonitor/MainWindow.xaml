@@ -12,6 +12,26 @@
 
     <!-- Drag handle: left-click drag moves the window -->
     <Grid MouseLeftButtonDown="Grid_MouseLeftButtonDown">
+        <Grid.ContextMenu>
+            <ContextMenu>
+                <MenuItem Header="Show Graph" Click="ShowGraph_Click"/>
+                <Separator/>
+                <MenuItem x:Name="DeviceStatusMenuItem"
+                          Header="Device: Searching…"
+                          IsEnabled="False"
+                          Foreground="#888"/>
+                <MenuItem x:Name="LockDeviceMenuItem"
+                          Header="Lock to Device"
+                          Click="LockDevice_Click"/>
+                <Separator/>
+                <MenuItem Header="Exit" Click="Exit_Click"/>
+            </ContextMenu>
+        </Grid.ContextMenu>
+        <Grid.ToolTip>
+            <ToolTip x:Name="OverlayToolTip">
+                <TextBlock x:Name="ToolTipText" Text="Device: Searching…"/>
+            </ToolTip>
+        </Grid.ToolTip>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="Auto"/>

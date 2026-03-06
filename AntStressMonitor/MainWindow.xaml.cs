@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -27,6 +28,8 @@ public partial class MainWindow : Window
     private DateTime _zoneEntryTime;
     private bool _inZone;
 
+    private GraphWindow? _graphWindow;
+
     private static readonly SolidColorBrush GreenBrush = new(Colors.LimeGreen);
     private static readonly SolidColorBrush WhiteBrush = new(Colors.White);
 
@@ -49,6 +52,7 @@ public partial class MainWindow : Window
         // Start ANT+ monitoring asynchronously
         _monitor.BpmUpdated += OnBpmUpdated;
         _monitor.RadioError += OnRadioError;
+        _monitor.DeviceStatusChanged += OnDeviceStatusChanged;
         Loaded += async (_, _) => await _monitor.StartAsync();
         Closed += OnWindowClosed;
     }
@@ -123,6 +127,67 @@ public partial class MainWindow : Window
             BpmText.Foreground = WhiteBrush;
         });
     }
+
+    // ------------------------------------------------------------------
+    // Device status updates
+    // ------------------------------------------------------------------
+
+    private void OnDeviceStatusChanged(string info)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            DeviceStatusMenuItem.Header = $"Device: {info}";
+            ToolTipText.Text = $"Device: {info}";
+            UpdateLockMenuItem();
+        });
+    }
+
+    private void UpdateLockMenuItem()
+    {
+        if (_monitor.LockedDeviceNumber.HasValue)
+            LockDeviceMenuItem.Header = $"Unlock Device (locked #{_monitor.LockedDeviceNumber})";
+        else
+            LockDeviceMenuItem.Header = "Lock to Current Device";
+    }
+
+    // ------------------------------------------------------------------
+    // Context-menu handlers
+    // ------------------------------------------------------------------
+
+    private void ShowGraph_Click(object sender, RoutedEventArgs e)
+    {
+        if (_graphWindow == null)
+        {
+            _graphWindow = new GraphWindow(_monitor);
+            _graphWindow.Closed += (_, _) => _graphWindow = null;
+            _graphWindow.Show();
+        }
+        else
+        {
+            _graphWindow.Activate();
+        }
+    }
+
+    private void LockDevice_Click(object sender, RoutedEventArgs e)
+    {
+        if (_monitor.LockedDeviceNumber.HasValue)
+        {
+            _monitor.UnlockDevice();
+        }
+        else
+        {
+            bool locked = _monitor.LockToCurrentDevice();
+            if (!locked)
+                MessageBox.Show(
+                    "No device is currently connected. Connect a heart-rate monitor first.",
+                    "Lock Device",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+        }
+        UpdateLockMenuItem();
+    }
+
+    private void Exit_Click(object sender, RoutedEventArgs e) => Close();
 
     // ------------------------------------------------------------------
     // Drag-to-move
