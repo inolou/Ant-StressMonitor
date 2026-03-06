@@ -11,6 +11,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
@@ -51,6 +53,8 @@ jobs:
         run: >
           dotnet publish AntStressMonitor/AntStressMonitor.csproj
           -c Release
+          -r win-x86
+          --self-contained true
           -p:EnableWindowsTargeting=true
 
       - name: Create release ZIP

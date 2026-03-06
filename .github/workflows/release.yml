@@ -30,6 +30,8 @@ jobs:
         run: >
           dotnet publish AntStressMonitor/AntStressMonitor.csproj
           -c Release
+          -r win-x86
+          --self-contained true
           -p:EnableWindowsTargeting=true
 
       - name: Determine version tag
