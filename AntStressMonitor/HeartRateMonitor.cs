@@ -11,7 +11,7 @@ namespace AntStressMonitor;
 
 /// <summary>
 /// Manages ANT+ USB radio, discovers HeartRate sensors, and exposes a
-/// 1-minute rolling-average BPM value via the <see cref="BpmUpdated"/> event.
+/// rolling-average BPM value via the <see cref="BpmUpdated"/> event.
 /// Also records up to 24 hours of raw BPM history for graph display.
 /// </summary>
 public sealed class HeartRateMonitor : IDisposable
@@ -19,9 +19,22 @@ public sealed class HeartRateMonitor : IDisposable
     // ------------------------------------------------------------------
     // Rolling-average window
     // ------------------------------------------------------------------
-    private const int RollingWindowSeconds = 60;
+    // 10 seconds is short enough to follow real heart-rate changes quickly
+    // while still smoothing beat-to-beat jitter from the ANT+ sensor.
+    private const int RollingWindowSeconds = 10;
     private readonly Queue<(DateTime Timestamp, int Bpm)> _samples = new();
     private readonly object _samplesLock = new();
+
+    // Tracks the last time a valid BPM sample was received (as UTC ticks).
+    // 0 means no sample has ever arrived.  Written with Interlocked so the
+    // eviction timer can read it safely from a thread-pool thread.
+    private long _lastSampleTimeTicks = 0;
+
+    // Background timer that evicts stale rolling-window samples once per
+    // second even when the ANT+ device stops broadcasting.  When the queue
+    // drains to empty (device gone silent) it fires BpmUpdated(0) so the
+    // UI reverts to "-- BPM" rather than remaining frozen.
+    private System.Threading.Timer? _evictionTimer;
 
     // ------------------------------------------------------------------
     // 24-hour BPM history
@@ -79,6 +92,13 @@ public sealed class HeartRateMonitor : IDisposable
             _collection = new AntDeviceCollection(_antRadio, loggerFactory, antDeviceTimeout: 5000);
             _collection.CollectionChanged += OnCollectionChanged;
             await _collection.StartScanning();
+
+            // Start a 1-second watchdog that evicts expired rolling-average
+            // samples even when the device has stopped sending data.
+            _evictionTimer = new System.Threading.Timer(
+                EvictStaleAndNotify, null,
+                TimeSpan.FromSeconds(1),
+                TimeSpan.FromSeconds(1));
         }
         catch (Exception ex)
         {
@@ -225,6 +245,36 @@ public sealed class HeartRateMonitor : IDisposable
     // Rolling average helpers
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// Called by <see cref="_evictionTimer"/> every second.  Removes expired
+    /// samples from the rolling window without requiring new data to arrive.
+    /// When the queue transitions from non-empty to empty (device has gone
+    /// silent for longer than <see cref="RollingWindowSeconds"/> seconds) a
+    /// zero-BPM update is fired so the overlay resets to "-- BPM".
+    /// </summary>
+    private void EvictStaleAndNotify(object? state)
+    {
+        // Skip entirely if no sample has ever been received.
+        if (Interlocked.Read(ref _lastSampleTimeTicks) == 0)
+            return;
+
+        var cutoff = DateTime.UtcNow.AddSeconds(-RollingWindowSeconds);
+        bool wasNonEmpty;
+        bool isEmpty;
+
+        lock (_samplesLock)
+        {
+            wasNonEmpty = _samples.Count > 0;
+            while (_samples.Count > 0 && _samples.Peek().Timestamp < cutoff)
+                _samples.Dequeue();
+            isEmpty = _samples.Count == 0;
+        }
+
+        // Queue just drained — data has gone stale; tell the UI to reset.
+        if (wasNonEmpty && isEmpty)
+            BpmUpdated?.Invoke(0);
+    }
+
     private void AddSample(int bpm)
     {
         var now = DateTime.UtcNow;
@@ -234,10 +284,13 @@ public sealed class HeartRateMonitor : IDisposable
         {
             _samples.Enqueue((now, bpm));
 
-            // Evict samples older than 60 seconds
+            // Evict samples older than RollingWindowSeconds
             while (_samples.Count > 0 && _samples.Peek().Timestamp < cutoff)
                 _samples.Dequeue();
         }
+
+        // Record arrival time for stale-data detection (thread-safe).
+        Interlocked.Exchange(ref _lastSampleTimeTicks, now.Ticks);
     }
 
     private int RollingAverage()
@@ -278,6 +331,9 @@ public sealed class HeartRateMonitor : IDisposable
             _activeDevice.DeviceWentOffline -= OnDeviceWentOffline;
             _activeDevice = null;
         }
+
+        _evictionTimer?.Dispose();
+        _evictionTimer = null;
 
         if (_antRadio is IDisposable disposableRadio)
             disposableRadio.Dispose();
