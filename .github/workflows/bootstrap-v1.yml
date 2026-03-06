@@ -1,0 +1,95 @@
+name: Bootstrap — Create Initial v1.0.0 Release
+
+# Runs once on push to this branch to create the very first release.
+# Guards against re-running if v1.0.0 already exists.
+
+on:
+  push:
+    branches:
+      - copilot/create-new-release
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Check whether v1.0.0 release already exists
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'v1.0.0',
+              });
+              core.setOutput('exists', 'true');
+              core.info('v1.0.0 release already exists — skipping.');
+            } catch (_) {
+              core.setOutput('exists', 'false');
+            }
+
+  create-release:
+    needs: check
+    if: needs.check.outputs.exists == 'false'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish (self-contained win-x86)
+        run: >
+          dotnet publish AntStressMonitor/AntStressMonitor.csproj
+          -c Release
+          -r win-x86
+          --self-contained true
+          -p:EnableWindowsTargeting=true
+
+      - name: Ensure native ANT+ DLLs are in publish directory
+        shell: pwsh
+        run: |
+          $pub = "AntStressMonitor\bin\Release\net8.0-windows\win-x86\publish"
+          $needed = @("ANT_WrappedLib.dll", "DSI_CP210xManufacturing_3_1.dll", "DSI_SiUSBXp_3_1.dll")
+          $missing = $needed | Where-Object { -not (Test-Path (Join-Path $pub $_)) }
+          if ($missing) {
+            Write-Host "DLLs missing from publish dir; copying from NuGet cache: $missing"
+            $csproj = [xml](Get-Content "AntStressMonitor\AntStressMonitor.csproj")
+            $version = ($csproj.Project.PropertyGroup | Where-Object { $_.AntUsbStickVersion } | Select-Object -First 1).AntUsbStickVersion
+            $nugetGlobal = (& dotnet nuget locals global-packages -l) -replace 'global-packages: ', '' | ForEach-Object { $_.Trim() }
+            $nativeSrc = Join-Path $nugetGlobal "smallearthtech.antusbstick\$version\build\win-x86\native"
+            if (-not (Test-Path $nativeSrc)) { Write-Error "NuGet native source not found: $nativeSrc"; exit 1 }
+            $missing | ForEach-Object { Copy-Item (Join-Path $nativeSrc $_) (Join-Path $pub $_) -Force }
+          }
+          Write-Host "Publish directory DLLs: $(Get-ChildItem $pub\*.dll | Select-Object -ExpandProperty Name)"
+
+      - name: Create release ZIP
+        shell: pwsh
+        run: |
+          $pub = "AntStressMonitor/bin/Release/net8.0-windows/win-x86/publish"
+          $files = @(
+            "$pub/AntStressMonitor.exe",
+            "$pub/ANT_WrappedLib.dll",
+            "$pub/DSI_CP210xManufacturing_3_1.dll",
+            "$pub/DSI_SiUSBXp_3_1.dll"
+          )
+          Compress-Archive -Path $files -DestinationPath AntStressMonitor-win-x86.zip
+
+      - name: Create GitHub Release v1.0.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: v1.0.0
+          generate_release_notes: true
+          files: AntStressMonitor-win-x86.zip

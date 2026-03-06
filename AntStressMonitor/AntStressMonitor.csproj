@@ -18,22 +18,30 @@
 
     <!-- DPI awareness -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Centralised version — update here and the native-DLL copy Target below stays in sync -->
+    <AntUsbStickVersion>4.1.0</AntUsbStickVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="SmallEarthTech.AntPlus" Version="6.0.3" />
-    <PackageReference Include="SmallEarthTech.AntUsbStick" Version="4.1.0" />
+    <PackageReference Include="SmallEarthTech.AntUsbStick" Version="$(AntUsbStickVersion)" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.1" />
   </ItemGroup>
 
-  <!-- Include ANT+ native x86 DLLs in the publish directory alongside the exe.
+  <!-- Copy ANT+ native x86 DLLs alongside the exe after publish.
+       Uses an explicit Target so the path is resolved correctly on all runners.
        These are unmanaged libs that must live next to the executable. -->
-  <ItemGroup>
-    <None Include="$(NuGetPackageRoot)smallearthtech.antusbstick/4.1.0/build/win-x86/native/*.dll"
-          Condition="Exists('$(NuGetPackageRoot)smallearthtech.antusbstick/4.1.0/build/win-x86/native/')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </None>
-  </ItemGroup>
+  <Target Name="CopyAntNativeDllsToPublish" AfterTargets="Publish">
+    <PropertyGroup>
+      <_AntNativeSrc>$([System.IO.Path]::Combine('$(NuGetPackageRoot)', 'smallearthtech.antusbstick', '$(AntUsbStickVersion)', 'build', 'win-x86', 'native'))</_AntNativeSrc>
+    </PropertyGroup>
+    <ItemGroup>
+      <_AntNativeDll Include="$(_AntNativeSrc)\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_AntNativeDll)" DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" Condition="'@(_AntNativeDll)' != ''" />
+    <Message Text="Copied ANT+ native DLLs: @(_AntNativeDll->'%(Filename)%(Extension)')" Importance="high" />
+  </Target>
 
 </Project>
