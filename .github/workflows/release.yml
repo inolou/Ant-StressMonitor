@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish (self-contained win-x86)
+        run: >
+          dotnet publish AntStressMonitor/AntStressMonitor.csproj
+          -c Release
+          -p:EnableWindowsTargeting=true
+
+      - name: Determine version tag
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "tag=${{ github.event.inputs.version }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "tag=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Create release ZIP
+        shell: pwsh
+        run: |
+          $pub = "AntStressMonitor/bin/Release/net8.0-windows/win-x86/publish"
+          $files = @(
+            "$pub/AntStressMonitor.exe",
+            "$pub/ANT_WrappedLib.dll",
+            "$pub/DSI_CP210xManufacturing_3_1.dll",
+            "$pub/DSI_SiUSBXp_3_1.dll"
+          )
+          Compress-Archive -Path $files -DestinationPath AntStressMonitor-win-x86.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: AntStressMonitor-win-x86.zip
