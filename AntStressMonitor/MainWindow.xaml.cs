@@ -33,6 +33,20 @@ public partial class MainWindow : Window
     private static readonly SolidColorBrush GreenBrush = new(Colors.LimeGreen);
     private static readonly SolidColorBrush WhiteBrush = new(Colors.White);
 
+    // Garmin stress-zone palette
+    private static readonly SolidColorBrush StressRestingBrush = new(Color.FromRgb(0x4D, 0xA6, 0xFF));  // blue  0-25
+    private static readonly SolidColorBrush StressLowBrush     = new(Color.FromRgb(0x00, 0xC8, 0x51));  // green 26-50
+    private static readonly SolidColorBrush StressMediumBrush  = new(Color.FromRgb(0xFF, 0xBB, 0x33));  // amber 51-75
+    private static readonly SolidColorBrush StressHighBrush    = new(Color.FromRgb(0xFF, 0x44, 0x44));  // red   76-100
+
+    private static SolidColorBrush GetStressBrush(int stress) => stress switch
+    {
+        <= 25 => StressRestingBrush,
+        <= 50 => StressLowBrush,
+        <= 75 => StressMediumBrush,
+        _     => StressHighBrush
+    };
+
     // ------------------------------------------------------------------
     // Construction
     // ------------------------------------------------------------------
@@ -51,6 +65,7 @@ public partial class MainWindow : Window
 
         // Start ANT+ monitoring asynchronously
         _monitor.BpmUpdated += OnBpmUpdated;
+        _monitor.StressUpdated += OnStressUpdated;
         _monitor.RadioError += OnRadioError;
         _monitor.DeviceStatusChanged += OnDeviceStatusChanged;
         Loaded += async (_, _) => await _monitor.StartAsync();
@@ -85,6 +100,29 @@ public partial class MainWindow : Window
         else if (!overThreshold && _inZone)
         {
             _inZone = false;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Stress callback (may arrive on a worker thread)
+    // ------------------------------------------------------------------
+
+    private void OnStressUpdated(int stress)
+    {
+        Dispatcher.InvokeAsync(() => UpdateStressDisplay(stress));
+    }
+
+    private void UpdateStressDisplay(int stress)
+    {
+        if (stress < 0)
+        {
+            StressText.Text = "S:--";
+            StressText.Foreground = WhiteBrush;
+        }
+        else
+        {
+            StressText.Text = $"S:{stress}";
+            StressText.Foreground = GetStressBrush(stress);
         }
     }
 

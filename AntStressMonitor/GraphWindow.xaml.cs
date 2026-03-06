@@ -24,12 +24,40 @@ public partial class GraphWindow : Window
     private static readonly Brush LabelBrush     = new SolidColorBrush(Color.FromRgb(0x99, 0x99, 0x99));
     private static readonly Brush NoDataBrush    = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
 
+    // Stress line and zone-label colours (Garmin palette)
+    private static readonly Brush StressLineBrush    = new SolidColorBrush(Color.FromRgb(0xFF, 0x99, 0x00));  // orange
+    private static readonly Brush StressRestingBrush = new SolidColorBrush(Color.FromRgb(0x4D, 0xA6, 0xFF));  // blue  0-25
+    private static readonly Brush StressLowBrush     = new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0x51));  // green 26-50
+    private static readonly Brush StressMediumBrush  = new SolidColorBrush(Color.FromRgb(0xFF, 0xBB, 0x33));  // amber 51-75
+    private static readonly Brush StressHighBrush    = new SolidColorBrush(Color.FromRgb(0xFF, 0x44, 0x44));  // red   76-100
+
+    private static Brush StressBrushForScore(int s) => s switch
+    {
+        <= 25 => StressRestingBrush,
+        <= 50 => StressLowBrush,
+        <= 75 => StressMediumBrush,
+        _     => StressHighBrush
+    };
+
+    private static string StressZoneName(int s) => s switch
+    {
+        <= 25 => "Resting",
+        <= 50 => "Low",
+        <= 75 => "Medium",
+        _     => "High"
+    };
+
     // ── Chart margins ───────────────────────────────────────────────────
     private const double LeftMargin       = 40;   // room for Y-axis labels
     private const double BottomMargin     = 22;   // room for X-axis labels
-    private const double RightMargin      = 8;
+    private const double RightMargin      = 42;   // room for stress Y-axis labels
     private const double TopMargin        = 6;
     private const double ApproxCharWidth  = 5.5;  // approx px/char for Segoe UI 9pt
+
+    // Annotation label offsets (pixels from last data point)
+    private const double AnnotationInset  = 26;   // px left of the plot right edge
+    private const double AnnotationAbove  = 14;   // px above the data point (BPM label)
+    private const double AnnotationBelow  = 2;    // px below the data point (stress label)
 
     // ── State ───────────────────────────────────────────────────────────
     private readonly HeartRateMonitor _monitor;
@@ -96,9 +124,10 @@ public partial class GraphWindow : Window
         if (plotW < 10 || plotH < 10)
             return;
 
-        var samples = _monitor.GetHistorySamples(_selectedRange);
+        var samples       = _monitor.GetHistorySamples(_selectedRange);
+        var stressSamples = _monitor.GetStressHistory(_selectedRange);
 
-        // ── Y range ────────────────────────────────────────────────────
+        // ── Y range (BPM, left axis) ───────────────────────────────────
         int yMin, yMax;
         if (samples.Count < 2)
         {
@@ -124,8 +153,11 @@ public partial class GraphWindow : Window
             => LeftMargin + (t - xStart).TotalSeconds / _selectedRange.TotalSeconds * plotW;
         double ToScreenY(double bpm)
             => TopMargin + (1.0 - (bpm - yMin) / (yMax - yMin)) * plotH;
+        // Stress Y-axis is fixed 0-100 mapped onto the same plot area.
+        double ToStressScreenY(double stress)
+            => TopMargin + (1.0 - stress / 100.0) * plotH;
 
-        // ── Horizontal grid lines + Y labels ───────────────────────────
+        // ── Horizontal grid lines + Y labels (BPM, left axis) ──────────
         int yStep = PickNiceStep(yMax - yMin, 5);
         for (int bpm = (yMin / yStep) * yStep; bpm <= yMax; bpm += yStep)
         {
@@ -156,6 +188,22 @@ public partial class GraphWindow : Window
         // ── Axis borders ───────────────────────────────────────────────
         AddLine(LeftMargin, TopMargin, LeftMargin, TopMargin + plotH, AxisBrush, 1);
         AddLine(LeftMargin, TopMargin + plotH, LeftMargin + plotW, TopMargin + plotH, AxisBrush, 1);
+
+        // ── Stress Y-axis (right) ──────────────────────────────────────
+        AddLine(LeftMargin + plotW, TopMargin, LeftMargin + plotW, TopMargin + plotH, AxisBrush, 1);
+
+        int[] stressAxisMarks = { 0, 25, 50, 75, 100 };
+        foreach (int sv in stressAxisMarks)
+        {
+            double sy = ToStressScreenY(sv);
+            // Small tick
+            AddLine(LeftMargin + plotW, sy, LeftMargin + plotW + 4, sy, AxisBrush, 0.5);
+            // Coloured label
+            var slbl = MakeLabel(sv.ToString(), StressBrushForScore(sv), 9);
+            Canvas.SetLeft(slbl, LeftMargin + plotW + 6);
+            Canvas.SetTop(slbl, sy - 7);
+            ChartCanvas.Children.Add(slbl);
+        }
 
         // ── X-axis time labels ─────────────────────────────────────────
         DrawXLabels(xStart, xEnd, plotW, TopMargin + plotH);
@@ -196,15 +244,52 @@ public partial class GraphWindow : Window
             var last = samples[^1];
             double lastY = Math.Clamp(ToScreenY(last.Bpm), TopMargin, TopMargin + plotH);
             var bpmLabel = MakeLabel($"{last.Bpm}", BpmLineBrush, 10, bold: true);
-            Canvas.SetLeft(bpmLabel, LeftMargin + plotW + 2);
-            Canvas.SetTop(bpmLabel, lastY - 7);
+            Canvas.SetLeft(bpmLabel, LeftMargin + plotW - AnnotationInset);
+            Canvas.SetTop(bpmLabel, lastY - AnnotationAbove);
             ChartCanvas.Children.Add(bpmLabel);
         }
+
+        // ── Stress polyline ────────────────────────────────────────────
+        string legendText = "Stress";
+        if (stressSamples.Count >= 2)
+        {
+            var stressPoints = new PointCollection(stressSamples.Count);
+            foreach (var (ts, sv) in stressSamples)
+            {
+                double x = Math.Clamp(ToScreenX(ts),     LeftMargin, LeftMargin + plotW);
+                double y = Math.Clamp(ToStressScreenY(sv), TopMargin, TopMargin + plotH);
+                stressPoints.Add(new Point(x, y));
+            }
+
+            var stressPolyline = new Polyline
+            {
+                Points          = stressPoints,
+                Stroke          = StressLineBrush,
+                StrokeThickness = 1.5,
+                StrokeLineJoin  = PenLineJoin.Round,
+                Opacity         = 0.9
+            };
+            ChartCanvas.Children.Add(stressPolyline);
+
+            // Current stress annotation — right edge, coloured by zone
+            var lastStress = stressSamples[^1];
+            double lastSY = Math.Clamp(ToStressScreenY(lastStress.Stress), TopMargin, TopMargin + plotH);
+            Brush zBrush = StressBrushForScore(lastStress.Stress);
+            var stressLabel = MakeLabel($"{lastStress.Stress}", zBrush, 10, bold: true);
+            Canvas.SetLeft(stressLabel, LeftMargin + plotW - AnnotationInset);
+            Canvas.SetTop(stressLabel, lastSY + AnnotationBelow);
+            ChartCanvas.Children.Add(stressLabel);
+
+            legendText = $"Stress: {lastStress.Stress} ({StressZoneName(lastStress.Stress)})";
+        }
+
+        // Update legend text in top bar
+        StressLegendText.Text = legendText;
 
         // ── Status line ────────────────────────────────────────────────
         StatusText.Text = samples.Count == 0
             ? "0 samples"
-            : $"{samples.Count} samples  ·  {RangeName()}  ·  {xStart.ToLocalTime():HH:mm} – {xEnd.ToLocalTime():HH:mm}";
+            : $"{samples.Count} BPM samples · {stressSamples.Count} stress samples · {RangeName()} · {xStart.ToLocalTime():HH:mm} – {xEnd.ToLocalTime():HH:mm}";
     }
 
     // ── X-axis label helpers ─────────────────────────────────────────────

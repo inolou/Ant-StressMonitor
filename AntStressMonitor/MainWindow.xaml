@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AntStressMonitor"
-        Width="150" Height="20"
+        Width="200" Height="20"
         WindowStyle="None"
         AllowsTransparency="True"
         Topmost="True"
@@ -35,6 +35,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
 
         <!-- BPM display -->
@@ -50,9 +51,21 @@
                    Margin="4,0,0,0"
                    SnapsToDevicePixels="True"/>
 
+        <!-- Stress display (S:42 coloured by Garmin zone) -->
+        <TextBlock x:Name="StressText"
+                   Grid.Column="1"
+                   Text="S:--"
+                   Foreground="White"
+                   FontFamily="Segoe UI"
+                   FontSize="9"
+                   VerticalAlignment="Center"
+                   HorizontalAlignment="Center"
+                   Margin="4,0,4,0"
+                   SnapsToDevicePixels="True"/>
+
         <!-- Time-in-Zone display -->
         <TextBlock x:Name="ZoneText"
-                   Grid.Column="1"
+                   Grid.Column="2"
                    Text="0:00"
                    Foreground="White"
                    FontFamily="Segoe UI"
