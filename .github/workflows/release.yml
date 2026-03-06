@@ -4,12 +4,14 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version tag (e.g. v1.0.0)'
+        description: 'Release version tag (e.g. v1.0.1)'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.0.1'
 
 jobs:
   release:
@@ -57,8 +59,14 @@ jobs:
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             "tag=${{ github.event.inputs.version }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          } else {
+          } elseif ("${{ github.ref_type }}" -eq "tag") {
             "tag=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            # Triggered by push to main: read version from csproj
+            $csproj = [xml](Get-Content "AntStressMonitor\AntStressMonitor.csproj")
+            $ver = ($csproj.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+            if (-not $ver) { Write-Error "No <Version> found in csproj"; exit 1 }
+            "tag=v$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
       - name: Create release ZIP
