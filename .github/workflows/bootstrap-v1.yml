@@ -57,6 +57,23 @@ jobs:
           --self-contained true
           -p:EnableWindowsTargeting=true
 
+      - name: Ensure native ANT+ DLLs are in publish directory
+        shell: pwsh
+        run: |
+          $pub = "AntStressMonitor\bin\Release\net8.0-windows\win-x86\publish"
+          $needed = @("ANT_WrappedLib.dll", "DSI_CP210xManufacturing_3_1.dll", "DSI_SiUSBXp_3_1.dll")
+          $missing = $needed | Where-Object { -not (Test-Path (Join-Path $pub $_)) }
+          if ($missing) {
+            Write-Host "DLLs missing from publish dir; copying from NuGet cache: $missing"
+            $csproj = [xml](Get-Content "AntStressMonitor\AntStressMonitor.csproj")
+            $version = ($csproj.Project.PropertyGroup | Where-Object { $_.AntUsbStickVersion } | Select-Object -First 1).AntUsbStickVersion
+            $nugetGlobal = (& dotnet nuget locals global-packages -l) -replace 'global-packages: ', '' | ForEach-Object { $_.Trim() }
+            $nativeSrc = Join-Path $nugetGlobal "smallearthtech.antusbstick\$version\build\win-x86\native"
+            if (-not (Test-Path $nativeSrc)) { Write-Error "NuGet native source not found: $nativeSrc"; exit 1 }
+            $missing | ForEach-Object { Copy-Item (Join-Path $nativeSrc $_) (Join-Path $pub $_) -Force }
+          }
+          Write-Host "Publish directory DLLs: $(Get-ChildItem $pub\*.dll | Select-Object -ExpandProperty Name)"
+
       - name: Create release ZIP
         shell: pwsh
         run: |
