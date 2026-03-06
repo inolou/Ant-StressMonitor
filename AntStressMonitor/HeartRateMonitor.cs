@@ -13,6 +13,8 @@ namespace AntStressMonitor;
 /// Manages ANT+ USB radio, discovers HeartRate sensors, and exposes a
 /// rolling-average BPM value via the <see cref="BpmUpdated"/> event.
 /// Also records up to 24 hours of raw BPM history for graph display.
+/// Computes a Garmin-style HRV stress score (0-100) from RMSSD of R-R
+/// intervals and exposes it via the <see cref="StressUpdated"/> event.
 /// </summary>
 public sealed class HeartRateMonitor : IDisposable
 {
@@ -37,11 +39,27 @@ public sealed class HeartRateMonitor : IDisposable
     private System.Threading.Timer? _evictionTimer;
 
     // ------------------------------------------------------------------
+    // R-R interval window (used for RMSSD / stress calculation)
+    // ------------------------------------------------------------------
+    // 3-minute window gives enough intervals for a reliable RMSSD at all
+    // common heart rates while remaining responsive to changing stress.
+    private const int RrWindowSeconds = 180;
+    private const int RrMinSamples    = 5;   // need at least 5 for a valid RMSSD
+    private readonly Queue<(DateTime Timestamp, double RRms)> _rrSamples = new();
+    private readonly object _rrLock = new();
+
+    // ------------------------------------------------------------------
     // 24-hour BPM history
     // ------------------------------------------------------------------
     private const int HistoryHours = 24;
     private readonly Queue<(DateTime Timestamp, int Bpm)> _history = new();
     private readonly object _historyLock = new();
+
+    // ------------------------------------------------------------------
+    // 24-hour stress history
+    // ------------------------------------------------------------------
+    private readonly Queue<(DateTime Timestamp, int Stress)> _stressHistory = new();
+    private readonly object _stressHistoryLock = new();
 
     // ------------------------------------------------------------------
     // ANT+ infrastructure (nullable until Start is called)
@@ -68,6 +86,12 @@ public sealed class HeartRateMonitor : IDisposable
 
     /// <summary>Raised on the calling thread (UI-safe via Dispatcher) when a new average BPM is available.</summary>
     public event Action<int>? BpmUpdated;
+
+    /// <summary>
+    /// Raised whenever a new HRV stress score has been calculated.
+    /// Value is 0–100 (Garmin scale) or -1 when no valid HRV data is available.
+    /// </summary>
+    public event Action<int>? StressUpdated;
 
     /// <summary>Raised when the ANT+ radio cannot be found or throws during initialisation.</summary>
     public event Action<Exception>? RadioError;
@@ -166,6 +190,20 @@ public sealed class HeartRateMonitor : IDisposable
         if (bpm <= 0)
             return;
 
+        // Collect the R-R interval for HRV/stress calculation.
+        // Valid physiological range: 300–2000 ms (30–200 BPM).
+        double rrMs = data.RRInterval;
+        if (rrMs >= 300 && rrMs <= 2000)
+        {
+            AddRRSample(rrMs);
+            int stress = ComputeStress();
+            if (stress >= 0)
+            {
+                AddStressHistorySample(stress);
+                StressUpdated?.Invoke(stress);
+            }
+        }
+
         AddHistorySample(bpm);
         AddSample(bpm);
         BpmUpdated?.Invoke(RollingAverage());
@@ -206,6 +244,97 @@ public sealed class HeartRateMonitor : IDisposable
                     result.Add(sample);
             }
             return result;
+        }
+    }
+
+    /// <summary>
+    /// Returns a snapshot of stress history samples within the specified age window.
+    /// Only samples with a valid score (≥ 0) are included.
+    /// </summary>
+    public IReadOnlyList<(DateTime Timestamp, int Stress)> GetStressHistory(TimeSpan maxAge)
+    {
+        var cutoff = DateTime.UtcNow - maxAge;
+
+        lock (_stressHistoryLock)
+        {
+            var result = new List<(DateTime, int)>(_stressHistory.Count);
+            foreach (var sample in _stressHistory)
+            {
+                if (sample.Timestamp >= cutoff)
+                    result.Add(sample);
+            }
+            return result;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // R-R / RMSSD / stress helpers
+    // ------------------------------------------------------------------
+
+    private void AddRRSample(double rrMs)
+    {
+        var now = DateTime.UtcNow;
+        var cutoff = now.AddSeconds(-RrWindowSeconds);
+
+        lock (_rrLock)
+        {
+            _rrSamples.Enqueue((now, rrMs));
+            while (_rrSamples.Count > 0 && _rrSamples.Peek().Timestamp < cutoff)
+                _rrSamples.Dequeue();
+        }
+    }
+
+    /// <summary>
+    /// Computes the current HRV stress score from the RMSSD of the R-R window.
+    /// Returns -1 when there are insufficient intervals for a reliable reading.
+    /// </summary>
+    private int ComputeStress()
+    {
+        double[] rr;
+
+        lock (_rrLock)
+        {
+            if (_rrSamples.Count < RrMinSamples)
+                return -1;
+
+            rr = _rrSamples.Select(s => s.RRms).ToArray();
+        }
+
+        // RMSSD = root mean square of successive differences between adjacent R-R intervals.
+        double sumSq = 0;
+        for (int i = 1; i < rr.Length; i++)
+        {
+            double diff = rr[i] - rr[i - 1];
+            sumSq += diff * diff;
+        }
+        double rmssd = Math.Sqrt(sumSq / (rr.Length - 1));
+
+        return RmssdToStress(rmssd);
+    }
+
+    /// <summary>
+    /// Maps an RMSSD value (ms) to a Garmin-compatible stress score 0–100.
+    /// Higher RMSSD (more HRV) → lower stress.  Calibrated against typical
+    /// adult RMSSD values (10–80 ms) following published HRV literature.
+    /// </summary>
+    private static int RmssdToStress(double rmssd)
+    {
+        const double minRmssd = 10.0;   // maps to stress = 100
+        const double maxRmssd = 80.0;   // maps to stress = 0
+        double clamped = Math.Clamp(rmssd, minRmssd, maxRmssd);
+        return (int)Math.Round(100.0 * (maxRmssd - clamped) / (maxRmssd - minRmssd));
+    }
+
+    private void AddStressHistorySample(int stress)
+    {
+        var now = DateTime.UtcNow;
+        var cutoff = now.AddHours(-HistoryHours);
+
+        lock (_stressHistoryLock)
+        {
+            _stressHistory.Enqueue((now, stress));
+            while (_stressHistory.Count > 0 && _stressHistory.Peek().Timestamp < cutoff)
+                _stressHistory.Dequeue();
         }
     }
 
@@ -251,6 +380,8 @@ public sealed class HeartRateMonitor : IDisposable
     /// When the queue transitions from non-empty to empty (device has gone
     /// silent for longer than <see cref="RollingWindowSeconds"/> seconds) a
     /// zero-BPM update is fired so the overlay resets to "-- BPM".
+    /// The R-R window is also cleared and StressUpdated(-1) is fired so the
+    /// stress display resets to "--".
     /// </summary>
     private void EvictStaleAndNotify(object? state)
     {
@@ -272,7 +403,11 @@ public sealed class HeartRateMonitor : IDisposable
 
         // Queue just drained — data has gone stale; tell the UI to reset.
         if (wasNonEmpty && isEmpty)
+        {
+            lock (_rrLock) { _rrSamples.Clear(); }
             BpmUpdated?.Invoke(0);
+            StressUpdated?.Invoke(-1);
+        }
     }
 
     private void AddSample(int bpm)
