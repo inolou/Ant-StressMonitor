@@ -19,6 +19,9 @@
     <!-- DPI awareness -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
+    <!-- Application release version -->
+    <Version>1.0.1</Version>
+
     <!-- Centralised version — update here and the native-DLL copy Target below stays in sync -->
     <AntUsbStickVersion>4.1.0</AntUsbStickVersion>
   </PropertyGroup>
