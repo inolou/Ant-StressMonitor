@@ -1,0 +1,39 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- Single-file portable executable -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <!-- ANT USB stick native libs are x86 only -->
+    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
+    <PlatformTarget>x86</PlatformTarget>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+
+    <!-- DPI awareness -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SmallEarthTech.AntPlus" Version="6.0.3" />
+    <PackageReference Include="SmallEarthTech.AntUsbStick" Version="4.1.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.1" />
+  </ItemGroup>
+
+  <!-- Include ANT+ native x86 DLLs in the publish directory alongside the exe.
+       These are unmanaged libs that must live next to the executable. -->
+  <ItemGroup>
+    <None Include="$(NuGetPackageRoot)smallearthtech.antusbstick/4.1.0/build/win-x86/native/*.dll"
+          Condition="Exists('$(NuGetPackageRoot)smallearthtech.antusbstick/4.1.0/build/win-x86/native/')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
